@@ -1,0 +1,13 @@
+{
+	admin 127.0.0.1:2019
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+{$ARIA_DOMAIN} {
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+		stream_close_delay 5m
+		transport http {
+			compression off
+		}
+	}
+}

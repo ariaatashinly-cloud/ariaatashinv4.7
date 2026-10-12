@@ -1,0 +1,19 @@
+services:
+  panel:
+    build: .
+    platform: linux/amd64
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file: .env
+    environment:
+      PORT: "8080"
+      ARIA_ENGINE_DIR: /app/x-ui
+      ARIA_MODE: cloud
+      ARIA_PERSISTENT_STORAGE: "true"
+    volumes:
+      - atia-data:/data
+    stop_grace_period: 15s
+
+volumes:
+  atia-data:

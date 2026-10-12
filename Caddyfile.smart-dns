@@ -1,0 +1,22 @@
+{
+	admin 127.0.0.1:2019
+	https_port 7443
+	auto_https disable_redirects
+	servers {
+		protocols h1 h2
+	}
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+}
+http://{$ARIA_DOMAIN} {
+	redir https://{$ARIA_DOMAIN}{uri} 308
+}
+{$ARIA_DOMAIN} {
+	bind 127.0.0.1
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+		stream_close_delay 5m
+		transport http {
+			compression off
+		}
+	}
+}

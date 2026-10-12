@@ -1,0 +1,42 @@
+services:
+  panel:
+    build: .
+    platform: linux/amd64
+    restart: unless-stopped
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    env_file: .env
+    environment:
+      PORT: "8080"
+      ARIA_MODE: vps
+      ARIA_BIND: "127.0.0.1"
+      ARIA_ENGINE_DIR: /app/x-ui
+      ARIA_PERSISTENT_STORAGE: "true"
+      ARIA_TLS_SERVER_NAME: ${ARIA_DOMAIN:?Set ARIA_DOMAIN in .env}
+      ARIA_TLS_CERT: /cert-store/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${ARIA_DOMAIN}/${ARIA_DOMAIN}.crt
+      ARIA_TLS_KEY: /cert-store/caddy/certificates/acme-v02.api.letsencrypt.org-directory/${ARIA_DOMAIN}/${ARIA_DOMAIN}.key
+      ARIA_RELOAD_ON_CERT_CHANGE: "true"
+    tmpfs:
+      - /tmp:size=64m,noexec,nosuid
+    volumes:
+      - atia-data:/data
+      - caddy-data:/cert-store:ro
+    stop_grace_period: 15s
+  caddy:
+    image: caddy:2.11.4-alpine
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      ARIA_DOMAIN: ${ARIA_DOMAIN:?Set ARIA_DOMAIN in .env}
+      XDG_DATA_HOME: /data
+      XDG_CONFIG_HOME: /config
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+volumes:
+  atia-data:
+  caddy-data:
+  caddy-config:

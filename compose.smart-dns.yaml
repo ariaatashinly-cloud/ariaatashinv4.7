@@ -1,0 +1,8 @@
+# Optional VPS override; save Smart DNS settings before switching Caddy.
+# docker compose -p ariaatashin -f compose.vps.yaml -f compose.smart-dns.yaml up -d --build
+services:
+  panel:
+    cap_add: [NET_BIND_SERVICE]
+  caddy:
+    volumes:
+      - ./Caddyfile.smart-dns:/etc/caddy/Caddyfile:ro
