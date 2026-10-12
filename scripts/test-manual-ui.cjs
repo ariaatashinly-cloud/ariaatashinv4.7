@@ -1,0 +1,171 @@
+'use strict';
+const assert = require('node:assert/strict');
+const {chromium} = require('playwright');
+const {spawn, spawnSync} = require('node:child_process');
+const {readFile} = require('node:fs/promises');
+const path = require('node:path');
+
+(async () => {
+  const base = process.env.ARIA_TEST_PANEL_URL || 'http://127.0.0.1:18180';
+  assert(['127.0.0.1','localhost','[::1]'].includes(new URL(base).hostname), 'This test must run against a disposable loopback panel');
+  const password = process.env.ARIA_TEST_PASSWORD;
+  assert(password, 'Set ARIA_TEST_PASSWORD for the disposable panel');
+  let launcher;
+  if (process.env.ARIA_TEST_LAUNCHER) {
+    assert(process.env.ARIA_TEST_DATA_DIR, 'Set ARIA_TEST_DATA_DIR to a disposable directory');
+    launcher=spawn(process.env.ARIA_TEST_LAUNCHER,[],{env:{...process.env,PORT:new URL(base).port||'18180',ARIA_BIND:'127.0.0.1',ARIA_ENGINE_DIR:process.env.ARIA_TEST_ENGINE_DIR,ARIA_DATA_DIR:process.env.ARIA_TEST_DATA_DIR,ARIA_ADMIN_USER:'admin',ARIA_ADMIN_PASSWORD:password,ARIA_PUBLIC_URL:''},stdio:'ignore'});
+    process.on('exit',()=>launcher.kill('SIGTERM'));
+    for(let i=0;i<120;i++){
+      try{const r=await fetch(base+'/health');if(r.ok)break}catch(e){}
+      await new Promise(r=>setTimeout(r,100));
+    }
+  }
+  let browser;
+  try {
+    browser = await chromium.launch({executablePath:process.env.ARIA_TEST_BROWSER,headless:true,args:['--no-sandbox']});
+    const page = await browser.newPage({viewport:{width:1360,height:940}});
+    const errors = [];
+    page.on('pageerror',e=>errors.push(e.message));
+    await page.goto(base);
+    await page.locator('#login-form input[name=username]').fill('admin');
+    await page.locator('#login-form input[name=password]').fill(password);
+    await page.locator('#login-form button[type=submit]').click();
+    await page.locator('#view-dashboard').waitFor({state:'visible'});
+    assert.equal(await page.locator('#dashboard-profiles .profile-mini').count(),8);
+    await page.locator('[data-view=settings]:visible').first().click();
+    const settings = page.locator('#connection-settings-form');
+    await settings.locator('[name=address]').fill('203.0.113.27');
+    await settings.locator('[name=port]').fill('8443');
+    await settings.locator('[name=host]').fill('http-route.example');
+    await settings.locator('[name=sni]').fill('certificate.example');
+    const saved = page.waitForResponse(r=>r.url().endsWith('/api/settings')&&r.request().method()==='POST');
+    await settings.locator('button[type=submit]').click();
+    assert.equal((await saved).status(),200);
+    await page.reload();
+    await page.locator('#view-dashboard').waitFor({state:'visible'});
+    await page.locator('[data-view=settings]:visible').first().click();
+    assert.equal(await settings.locator('[name=address]').inputValue(),'203.0.113.27');
+    assert.equal(await settings.locator('[name=sni]').inputValue(),'certificate.example');
+    // Partial domain saves must keep the independent dial target.
+    const domainSaved = page.waitForResponse(r=>r.url().endsWith('/api/settings')&&r.request().method()==='POST');
+    await page.locator('#settings-form button[type=submit]').click();
+    assert.equal((await domainSaved).status(),200);
+    assert.equal(await settings.locator('[name=address]').inputValue(),'203.0.113.27');
+    await page.locator('[data-view=users]:visible').first().click();
+    await page.locator('#view-users .create-trigger').first().click();
+    const create = page.locator('#create-form');
+    await create.locator('[name=name]').fill('UI eight profiles');
+    await create.locator('[data-select-cloud]').click();
+    assert.equal(await create.locator('[name=profiles]:checked').count(),8);
+    const automaticMade = page.waitForResponse(r=>r.url().endsWith('/api/users')&&r.request().method()==='POST');
+    await page.locator('#create-submit').click();
+    const automaticResponse = await automaticMade;
+    assert.equal(automaticResponse.status(),200);
+    const automatic = await automaticResponse.json();
+    assert.equal(automatic.warning,'');
+    const automaticUser = automatic.state.users.find(u=>u.email===automatic.created[0]);
+    assert.equal(automaticUser.links.length,8);
+    assert.equal(automatic.state.version,'4.3.0');
+    await page.locator('#links-dialog .close-dialog').click();
+    await page.locator('#view-users .manual-create-trigger').click();
+    await page.locator('#manual-fields').waitFor({state:'visible'});
+    await create.locator('[name=name]').fill('UI manual test');
+    await create.locator('[name=manualProtocol]').selectOption('trojan');
+    await create.locator('[name=manualNetwork]').selectOption('xhttp');
+    await create.locator('[name=manualMode]').selectOption('packet-up');
+    await create.locator('[name=manualPath]').fill('/connect/browser-manual-01/');
+    await create.locator('[name=manualAddress]').fill('2001:db8::123');
+    await create.locator('[name=manualPort]').fill('443');
+    await create.locator('[name=manualPassword]').fill('Test+manual!123');
+    const draft=await page.evaluate(()=>window.manualCreateBody());
+    assert.equal(draft.endpoint.address,'2001:db8::123','manual draft address');
+    const made = page.waitForResponse(r=>r.url().endsWith('/api/users')&&r.request().method()==='POST');
+    await page.locator('#create-submit').click();
+    const response = await made;
+    assert.equal(response.status(),200);
+    const submitted=response.request().postDataJSON();
+    assert.equal(submitted.manual.endpoint.address,'2001:db8::123','submitted manual address');
+    const body=await response.json();
+    assert.equal(body.created.length,1);
+    assert.equal(body.warning,'');
+    const user=body.state.users.find(u=>u.email===body.created[0]);
+    const link=new URL(user.links[0].link);
+    assert.equal(link.hostname,'[2001:db8::123]');
+    assert.equal(link.searchParams.get('host'),'http-route.example');
+    assert.equal(link.searchParams.get('mode'),'packet-up');
+    await page.locator('#links-dialog').waitFor({state:'visible'});
+    assert.deepEqual(errors,[], 'browser initialization errors');
+    const [download] = await Promise.all([page.waitForEvent('download'),page.locator('#download-xray-outbounds').click()]);
+    assert.equal(download.suggestedFilename(),'ariaatashin-xray-outbounds.json');
+    await page.locator('#links-dialog .close-dialog').click();
+    await page.locator('#view-users .manual-create-trigger').click();
+    await create.locator('[name=name]').fill('UI Shadowsocks manual test');
+    await create.locator('[name=manualProtocol]').selectOption('shadowsocks');
+    assert.equal(await create.locator('[name=manualMethod]').isVisible(),true);
+    assert.equal(await create.locator('[name=manualUUID]').isVisible(),false);
+    assert.equal(await create.locator('[name=manualPassword]').isVisible(),true);
+    await create.locator('[name=manualMethod]').selectOption('aes-256-gcm');
+    await create.locator('[name=manualNetwork]').selectOption('xhttp');
+    await create.locator('[name=manualPath]').fill('/connect/browser-ss-manual-01/');
+    await create.locator('[name=manualPassword]').fill('Test+SS:/!password-123');
+    const ssMade = page.waitForResponse(r=>r.url().endsWith('/api/users')&&r.request().method()==='POST');
+    await page.locator('#create-submit').click();
+    const ssResponse = await ssMade;
+    assert.equal(ssResponse.status(),200);
+    const ssResult = await ssResponse.json();
+    assert.equal(ssResult.warning,'');
+    const ssUser = ssResult.state.users.find(u=>u.email===ssResult.created[0]);
+    const ssLink = new URL(ssUser.links[0].link);
+    assert.equal(Buffer.from(ssLink.username,'base64url').toString(),'aes-256-gcm:Test+SS:/!password-123');
+    assert.equal(ssLink.hostname,'203.0.113.27');
+    assert.equal(ssLink.searchParams.get('type'),'xhttp');
+    assert.equal(await page.locator('#client-format-note').isVisible(),true);
+    const [fullDownload] = await Promise.all([page.waitForEvent('download'),page.locator('#download-xray-config').click()]);
+    const fullDownloadPath = await fullDownload.path();
+    const fullConfig = JSON.parse(await readFile(fullDownloadPath,'utf8'));
+    assert.equal(fullConfig.inbounds[0].listen,'127.0.0.1');
+    assert.equal(fullConfig.inbounds[0].protocol,'socks');
+    assert.equal(fullConfig.outbounds.length,1);
+    assert.equal(fullConfig.outbounds[0].protocol,'shadowsocks');
+    assert.equal(fullConfig.outbounds[0].settings.servers[0].method,'aes-256-gcm');
+    assert.equal(fullConfig.outbounds[0].streamSettings.network,'xhttp');
+    assert.equal(fullConfig.outbounds[0].streamSettings.xhttpSettings.host,'http-route.example');
+    if(process.env.ARIA_TEST_ENGINE_DIR){
+      const validation = spawnSync(path.join(process.env.ARIA_TEST_ENGINE_DIR,'bin','xray-linux-amd64'),['run','-test','-format','json','-config',fullDownloadPath],{encoding:'utf8'});
+      assert.equal(validation.status,0,validation.stderr + validation.stdout);
+    }
+    await page.locator('#links-dialog .close-dialog').click();
+    await page.locator('#view-users .create-trigger').click();
+    assert.equal(await page.locator('#manual-fields').isVisible(),false);
+    await page.locator('#create-dialog .close-dialog').first().click();
+    await page.setViewportSize({width:390,height:844});
+    await page.locator('#view-users .manual-create-trigger').click();
+    await page.locator('#manual-fields').waitFor({state:'visible'});
+    await create.locator('[name=manualNetwork]').selectOption('xhttp');
+    await page.screenshot({path:process.env.ARIA_TEST_SCREENSHOT || '/tmp/aria-manual-mobile.png',fullPage:true});
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'mobile layout overflow');
+    assert.equal(await create.locator('[name=manualPassword]').isVisible(),false);
+    await create.locator('[name=manualProtocol]').selectOption('shadowsocks');
+    assert.equal(await create.locator('[name=manualPassword]').isVisible(),true);
+    assert.equal(await create.locator('[name=manualMethod]').isVisible(),true);
+    assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth),false,'mobile Shadowsocks layout overflow');
+    await page.screenshot({path:process.env.ARIA_TEST_SCREENSHOT || '/tmp/aria-manual-mobile.png',fullPage:true});
+    await page.locator('#create-dialog .close-dialog').first().click();
+    await page.locator('.mobile-nav [data-view=settings]').click();
+    const resetSaved = page.waitForResponse(r=>r.url().endsWith('/api/settings')&&r.request().method()==='POST');
+    await page.locator('#reset-connection-address').click();
+    assert.equal((await resetSaved).status(),200);
+    assert.equal(await settings.locator('[name=address]').inputValue(),'');
+    assert.deepEqual(errors,[],'browser console errors');
+    console.log('PASS: eight automatic profiles, endpoint persistence, partial settings, Trojan/XHTTP and Shadowsocks manual creation, Xray downloads and native config validation, preset reset, mobile layout, endpoint reset');
+  } finally {
+    if(browser) await browser.close();
+    if(launcher && launcher.exitCode===null){
+      await new Promise(resolve=>{
+        launcher.once('exit',resolve);
+        launcher.kill('SIGTERM');
+        setTimeout(()=>{launcher.kill('SIGKILL');resolve()},5000).unref();
+      });
+    }
+  }
+})().catch(e=>{console.error(e);process.exitCode=1});
