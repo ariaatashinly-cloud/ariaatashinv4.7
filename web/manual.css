@@ -1,0 +1,15 @@
+.create-modes{display:flex;gap:8px;margin-bottom:20px;padding:5px;border:1px solid var(--line,#3c323b);border-radius:14px}
+.create-modes button{flex:1;background:transparent;color:inherit;border:0;border-radius:10px;padding:12px;cursor:pointer;font:inherit}
+.create-modes button.active{background:var(--orange,#f59045);color:#21150c;font-weight:700}
+#manual-fields{min-width:0;border:0;padding:0;margin:0}
+#manual-fields legend{font-weight:700;margin:8px 0 14px}
+#manual-fields select{width:100%;padding:13px;background:#1b161c;color:#f5ece2;border:1px solid #51434d;border-radius:12px;font:inherit}
+.manual-endpoint-note{padding:12px 14px;margin:8px 0 18px;border-radius:12px;border:1px solid #51434d;font-size:12px;line-height:1.9;color:#cbbfba}
+.heading-actions,.connection-setting-actions{display:flex;gap:10px;flex-wrap:wrap}
+#connection-settings-form .form-grid,#manual-fields .form-grid{align-items:start}
+#connection-endpoint-note{overflow-wrap:anywhere}
+.manual-create-trigger{white-space:nowrap}
+@media(max-width:600px){.heading-actions{width:100%}.heading-actions .button{flex:1}.connection-setting-actions .button{width:100%}.create-modes button{padding:10px 6px}}
+
+#links-dialog .link-actions{flex-wrap:wrap}
+#links-dialog .link-actions>.button{flex:1 1 calc(50% - 8px)}
